@@ -1,39 +1,65 @@
-"""Helpers to access the bundled example data and the HTML vignette."""
-
+import os
+import shutil
+import tempfile
+import urllib.error
+import urllib.request
 import webbrowser
 from importlib import resources
 from pathlib import Path
 
+_REPO = "PatronRiveroC/activeFrontier"
+_BRANCH = "main"
+_FOLDER = "src/data"
 
-def _package_dir(name):
-    return Path(str(resources.files("activefrontier") / name))
+_RAW_URL = f"https://raw.githubusercontent.com/{_REPO}/{_BRANCH}/{_FOLDER}/"
+_BARRIER_FILES = ["hidro.shp", "hidro.shx", "hidro.dbf", "hidro.prj"]
+_ALL_SPECIES = ("A", "B", "C", "D", "E", "F", "G", "I", "J")
 
 
-def get_example_data(filename=None):
-    """Return the path (str) of the bundled example data.
+def _default_cache_dir():
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(Path.home(), ".cache")
+    return Path(base) / "activefrontier" / "data"
 
-    Without arguments, returns the folder that holds ``rA.tif``, ``rB.tif``,
-    ``occA.csv``, ``occB.csv`` and ``hidro.shp``. With ``filename``, returns
-    the full path of that file.
-    """
-    data_dir = _package_dir("data")
-    if filename is None:
-        return str(data_dir)
-    path = data_dir / filename
-    if not path.exists():
-        available = sorted(p.name for p in data_dir.iterdir())
-        raise FileNotFoundError(
-            f"'{filename}' is not in the bundled data. Available files: {available}"
-        )
-    return str(path)
+
+def _download(name, target):
+    url = _RAW_URL + urllib.request.quote(name)
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=target.parent)
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp, urllib.request.urlopen(url, timeout=60) as response:
+            shutil.copyfileobj(response, tmp)
+        os.replace(tmp_name, target)
+    except Exception as err:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+        raise ConnectionError(f"Could not download '{name}' from {url}. Details: {err}") from err
+
+
+def get_example_data(species=("A", "B"), dest=None, overwrite=False):
+
+    folder = Path(dest) if dest is not None else _default_cache_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(species, str) and species.lower() == "all":
+        letters = list(_ALL_SPECIES)
+    else:
+        letters = [species] if isinstance(species, str) else list(species)
+
+    names = list(_BARRIER_FILES)
+    for letter in letters:
+        names += [f"r{letter}.tif", f"occ{letter}.csv"]
+
+    for name in names:
+        target = folder / name
+        if overwrite or not target.exists():
+            print(f"Downloading {name}...")
+            _download(name, target)
+
+    return str(folder)
 
 
 def vignette(open_browser=True):
-    """Open the HTML vignette in the default web browser.
 
-    Returns the path of the vignette file, so it can also be opened manually.
-    """
-    path = _package_dir("vignette") / "vignette.html"
+    path = Path(str(resources.files("activefrontier") / "vignette")) / "vignette.html"
     if not path.exists():
         raise FileNotFoundError(f"Vignette not found at {path}")
     if open_browser:
